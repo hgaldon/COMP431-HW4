@@ -15,22 +15,63 @@ seq = "503 Bad sequence of commands"
 
 def main():
     if len(sys.argv) != 2:
-    print("Usage: python SMTP1.py <port>")
-    sys.exit(1)
+        print("Usage: python SMTP1.py <port>")
+        sys.exit(1)
 
     port = int(sys.argv[1])
+    start_server(port)
 
+def start_server(port):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('', port))  # Bind to all interfaces
-    server_socket.listen(5)  # Listen for up to 5 connections
+    server_socket.bind(('', port))
+    server_socket.listen(5)
 
+    while True:
+        client_socket, address = server_socket.accept()
+        handle_client(client_socket)
+
+def handle_client(client_socket):
+    server_hostname = "comp431sp24.cs.unc.edu"
+    client_socket.sendall(f"220 {server_hostname}\r\n".encode())
+
+    helo_message = receive_command(client_socket)
+    if helo_message.startswith("HELO"):
+        client_domain = helo_message[5:]
+        response = f"250 Hello {client_domain} pleased to meet you\r\n"
+        client_socket.sendall(response.encode())
+    else:
+        client_socket.sendall("500 Syntax error: command unrecognized\r\n".encode())
+        client_socket.close()
+        return
+
+    while True:
+        command = receive_command(client_socket)
+        if command == "QUIT":
+            break
+        start_parse(client_socket)
+
+    client_socket.sendall(f"221 {server_hostname} closing connection\r\n".encode())
+    client_socket.close()
+
+def receive_command(client_socket):
+    command = ""
+    while not command.endswith("\r\n"):
+        part = client_socket.recv(1024).decode('utf-8')  # Receive a chunk of data
+        if not part:  # If no data is received, the client may have closed the connection
+            break
+        command += part
+    return command
+
+def start_parse(client_socket):
     str_flag = "M"
     mail_list = []
 
     while True:
-        input_line = sys.stdin.readline()
-        if input_line == '':
+        input_line = client_socket.recv(1024).decode()
+        if not input_line or input_line == "\r\n":
             break
+        
+        # Process the input line as before
         str_flag, should_continue = process_input(input_line, str_flag, mail_list)
         if not should_continue or str_flag == 'D':
             str_flag = "M"
@@ -209,29 +250,31 @@ def saveMail(email_list):
         forward_dir = os.path.join(script_dir, 'forward')
         os.makedirs(forward_dir, exist_ok=True)
 
-        from_line = email_list[0].replace("FROM", "From")
+        from_line = email_list[0].replace("FROM", "From:")
         to_email_addresses = []
 
         for line in email_list[1:]:
             if line.upper().startswith("TO"):
-                line = line.replace("TO", "To")
+                line = line.replace("TO", "To:")
                 to_email_addresses.append(line)
 
-        email_content = [from_line] + to_email_addresses
+        email_content = [from_line] + to_email_addresses + [""]
         for line in email_list[1:]:
             if not line.upper().startswith("TO"):
                 email_content.append(line)
 
+        domains = set()
         for to_line in to_email_addresses:
-            start = to_line.find('<')
-            end = to_line.find('>')
-            email_address = to_line[start + 1:end]
+            email_address = to_line.split(':')[1].strip().strip("<>")
+            domain = email_address.split('@')[-1]
+            domains.add(domain)
 
-            safe_email_address = "".join(x if x.isalnum() or x in {'@', '.'} else '' for x in email_address)
-            file_path = os.path.join(forward_dir, safe_email_address)
+        # Write email content to forward files based on domain
+        for domain in domains:
+            file_path = os.path.join(forward_dir, domain)
             try:
                 with open(file_path, "a") as file:
-                    file.write('\n'.join(email_content) + "\n")
+                    file.write('\n'.join(email_content) + "\n\n")
             except IOError as e:
                 if e.errno == errno.EACCES:
                     print(f"Permission denied: {file_path}", file=sys.stderr)
