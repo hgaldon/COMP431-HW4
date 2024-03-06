@@ -1,9 +1,5 @@
 # I abide by the honor code, Harry Galdon
 
-import errno
-import os
-import re
-import sys
 import sys
 import socket
 
@@ -97,56 +93,79 @@ def prompt_user_for_email():
     return from_address, to_addresses, subject, message_lines
 
 def send_email_via_smtp(from_address, to_addresses, subject, message_lines, hostname, port):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    try:
+        print("Starting to send email...")
+        sock = socket.socket()
+        print(f"Connecting to {hostname} on port {port}...")
+        
         sock.connect((hostname, port))
+        print("Connected.")
         
         server_greeting = sock.recv(1024).decode()
+        print(f"Server greeting: {server_greeting}")
         if not server_greeting.startswith('220'):
             print("Failed to receive a valid server greeting.")
-            return False
+            return
         
-        domain = socket.gethostname()
-        helo_command = f"HELO {domain}\r\n"
+        helo_command = f"HELO {socket.gethostname()}\n"
+        print(f"Sending HELO command: {helo_command.strip()}")
         sock.send(helo_command.encode())
         
         helo_response = sock.recv(1024).decode()
+        print(f"HELO response: {helo_response}")
         if not helo_response.startswith('250'):
             print("HELO command failed.")
             return False
         
-        sock.send(f"MAIL FROM: <{from_address}>\r\n".encode())
+        mail_from_cmd = f"MAIL FROM: <{from_address}>\n"
+        print(f"Sending MAIL FROM command: {mail_from_cmd.strip()}")
+        sock.send(mail_from_cmd.encode())
         mail_from_response = sock.recv(1024).decode()
+        print(f"MAIL FROM response: {mail_from_response}")
         if not mail_from_response.startswith('250'):
             print("MAIL FROM command failed.")
             return False
         
         for addr in to_addresses:
-            sock.send(f"RCPT TO: <{addr}>\r\n".encode())
+            rcpt_to_cmd = f"RCPT TO: <{addr}>\n"
+            print(f"Sending RCPT TO command for {addr}: {rcpt_to_cmd.strip()}")
+            sock.send(rcpt_to_cmd.encode())
             rcpt_to_response = sock.recv(1024).decode()
+            print(f"RCPT TO response for {addr}: {rcpt_to_response}")
             if not rcpt_to_response.startswith('250'):
                 print(f"RCPT TO command failed for {addr}.")
                 return False
         
-        sock.send("DATA\r\n".encode())
+        print("Sending DATA command.")
+        sock.send("DATA\n".encode())
         data_response = sock.recv(1024).decode()
+        print(f"DATA response: {data_response}")
         if not data_response.startswith('354'):
             print("DATA command failed.")
             return False
         
         email_message = format_email_message(from_address, to_addresses, subject, message_lines)
+        print("Sending email data...")
         sock.send(email_message.encode())
         
         end_data_response = sock.recv(1024).decode()
+        print(f"End of data response: {end_data_response}")
         if not end_data_response.startswith('250'):
             print("Error sending email data.")
             return False
 
-        sock.send("QUIT\r\n".encode())
+        print("Sending QUIT command.")
+        sock.send("QUIT".encode())
         quit_response = sock.recv(1024).decode()
+        print(f"QUIT response: {quit_response}")
         if not quit_response.startswith('221'):
             print("Error during QUIT.")
             return False
 
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return False
+    print("Email sent successfully.")
     return True
 
 def format_email_message(from_address, to_addresses, subject, message_lines):
@@ -157,7 +176,8 @@ def format_email_message(from_address, to_addresses, subject, message_lines):
         f"Subject: {subject}",
         "",
     ]
-    return "\r\n".join(headers + message_lines) + "\r\n.\r\n"
+    # Adjust line endings to \n for the email body
+    return "\n".join(headers + message_lines) + "\n.\n"
 
 if __name__ == "__main__":
     main()

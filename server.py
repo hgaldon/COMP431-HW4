@@ -1,6 +1,6 @@
 # I abide by the honor code, Harry Galdon
 
-import errno
+import logging
 import socket
 import sys
 import re
@@ -23,61 +23,66 @@ def main():
 
 def start_server(port):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('', port))
+    server_address = (socket.gethostname(), port)
+    server_socket.bind(server_address)
     server_socket.listen(5)
 
     while True:
-        client_socket, address = server_socket.accept()
+        (client_socket, address) = server_socket.accept()
         handle_client(client_socket)
 
 def handle_client(client_socket):
-    server_hostname = "comp431sp24.cs.unc.edu"
-    client_socket.sendall(f"220 {server_hostname}\r\n".encode())
+    try:
+        client_socket.sendall(f"220 {socket.gethostname()}\n".encode())
 
-    helo_message = receive_command(client_socket)
-    if helo_message.startswith("HELO"):
-        client_domain = helo_message[5:]
-        response = f"250 Hello {client_domain} pleased to meet you\r\n"
-        client_socket.sendall(response.encode())
-    else:
-        client_socket.sendall("500 Syntax error: command unrecognized\r\n".encode())
+        while True:
+            command = receive_command(client_socket)
+            if command.startswith("HELO"):
+                client_domain = command[5:].strip()
+                response = f"250 Hello {client_domain}, pleased to meet you\n"
+                client_socket.sendall(response.encode())
+                start_parse(client_socket)
+            elif command.strip() == "QUIT":
+                client_socket.sendall(f"221 {socket.gethostname()} closing connection\n".encode())
+                break
+            else:
+                client_socket.sendall("500 Syntax error: command unrecognized\n".encode())
+    finally:
         client_socket.close()
-        return
-
-    while True:
-        command = receive_command(client_socket)
-        if command == "QUIT":
-            break
-        start_parse(client_socket)
-
-    client_socket.sendall(f"221 {server_hostname} closing connection\r\n".encode())
-    client_socket.close()
 
 def receive_command(client_socket):
-    command = ""
-    while not command.endswith("\r\n"):
-        part = client_socket.recv(1024).decode('utf-8')  # Receive a chunk of data
-        if not part:  # If no data is received, the client may have closed the connection
-            break
-        command += part
-    return command
+    try:
+        command = client_socket.recv(1024).decode()
+        logging.info(f"Command received: {command}")
+        return command.strip()
+    except Exception as e:
+        logging.error(f"Error receiving command: {e}")
+        
+def handle_quit(client_socket):
+    closing_message = "221 Service closing transmission channel\r\n"
+    client_socket.send(closing_message.encode())
+    client_socket.close()
+    logging.info("Connection closed with client.")
+
 
 def start_parse(client_socket):
     str_flag = "M"
     mail_list = []
 
     while True:
-        input_line = client_socket.recv(1024).decode()
-        if not input_line or input_line == "\r\n":
+        command = receive_command(client_socket)
+        if command == "QUIT":
+            break
+        input_line = command
+        if not input_line or input_line == "\n":
             break
         
-        # Process the input line as before
-        str_flag, should_continue = process_input(input_line, str_flag, mail_list)
+        str_flag, should_continue = process_input(input_line, str_flag, mail_list, client_socket)
         if not should_continue or str_flag == 'D':
             str_flag = "M"
             mail_list = []
 
-def process_input(input, str_flag, mail_list):
+def process_input(input, str_flag, mail_list, socket):
     display = input.strip('\n')
     print(display)
 
@@ -99,6 +104,7 @@ def process_input(input, str_flag, mail_list):
             to_addr = display.split(maxsplit=1)[1]
             mail_list.append(to_addr)
             str_flag = "R+"
+            socket.sendall(f"{accepted}\n".encode())
         else:
             return str_flag, False
 
@@ -120,6 +126,7 @@ def process_input(input, str_flag, mail_list):
             from_addr = display.split(maxsplit=1)[1]
             mail_list.append(from_addr)
             str_flag = "R"
+            socket.sendall(f"{accepted}\n".encode())
         else:
             return str_flag, False
 
@@ -127,9 +134,11 @@ def process_input(input, str_flag, mail_list):
         if str_flag != "R+":
             print(seq)
             return str_flag, False
-        result = is_valid_data()
+        socket.sendall(f"{mail_input}\n".encode())
+        result = is_valid_data(receive_command(socket))
         if result is not None:
             mail_list.extend(result)
+            socket.sendall(f"{accepted}\n".encode())
             saveMail(mail_list)
         else:
             return str_flag, False
@@ -140,17 +149,30 @@ def process_input(input, str_flag, mail_list):
         return str_flag, False
 
     return str_flag, True
-        
-def is_valid_data():
+
+def receive_command_from_message(message_lines, current_line):
+    if current_line < len(message_lines):
+        return message_lines[current_line] + '\n'
+    return None
+
+def is_valid_data(email_message):
     body = []
     nlFlag = 0
-    print(mail_input)
+    message_lines = email_message.split('\n')
+    current_line = 0
+    
     while True:
-        message = sys.stdin.readline()
+        message = receive_command_from_message(message_lines, current_line)
+        current_line += 1
+        
+        if message is None:
+            break
+        
         if message == ".\n" and nlFlag == 1:
-            print(message.strip('\n'))
-            print(accepted)
-            return body  
+            #print(message.strip('\n'))
+            #print("Accepted")
+            body.append(message)
+            return body
         else:
             if message.endswith('\n'):
                 nlFlag = 1
@@ -241,7 +263,7 @@ def is_valid(s):
         print(rej_com)
         return
     else:
-        print(accepted)
+        #print(accepted)
         return accepted
 
 def saveMail(email_list):
@@ -250,48 +272,31 @@ def saveMail(email_list):
         forward_dir = os.path.join(script_dir, 'forward')
         os.makedirs(forward_dir, exist_ok=True)
 
-        from_line = email_list[0].replace("FROM", "From:")
-        to_email_addresses = []
-
-        for line in email_list[1:]:
-            if line.upper().startswith("TO"):
-                line = line.replace("TO", "To:")
-                to_email_addresses.append(line)
-
-        email_content = [from_line] + to_email_addresses + [""]
-        for line in email_list[1:]:
-            if not line.upper().startswith("TO"):
-                email_content.append(line)
-
+        email_content = []
         domains = set()
-        for to_line in to_email_addresses:
-            email_address = to_line.split(':')[1].strip().strip("<>")
-            domain = email_address.split('@')[-1]
-            domains.add(domain)
 
-        # Write email content to forward files based on domain
+        for line in email_list:
+            if line.startswith("From:"):
+                email_content = [line]
+            elif line == ".\n":
+                continue
+            else:
+                email_content.append(line)
+                if line.startswith("To:"):
+                    email_addresses = line.split(':')[1].strip().split(',')
+                    for email_address in email_addresses:
+                        email_address = email_address.strip().strip("<>")
+                        domain = email_address.split('@')[-1]
+                        domains.add(domain)
+
         for domain in domains:
-            file_path = os.path.join(forward_dir, domain)
-            try:
-                with open(file_path, "a") as file:
-                    file.write('\n'.join(email_content) + "\n\n")
-            except IOError as e:
-                if e.errno == errno.EACCES:
-                    print(f"Permission denied: {file_path}", file=sys.stderr)
-                    sys.exit(1)
-                elif e.errno == errno.ENOSPC:
-                    print("No space left on device to write: ", file_path, file=sys.stderr)
-                    sys.exit(1)
-                else:
-                    print(f"Error writing to {file_path}: {e}", file=sys.stderr)
-                    sys.exit(1)
-            except Exception as e:
-                print(f"An unexpected error occurred: {e}", file=sys.stderr)
-                sys.exit(1)
-
+            file_path = os.path.join(forward_dir, f"{domain}")
+            with open(file_path, "a") as file:
+                file.write('\n'.join(email_content) + "\n")
+    except IOError as e:
+        print(f"Error writing to {file_path}: {e}")
     except Exception as e:
-        print(f"An unexpected error occurred: {e}", file=sys.stderr)
-        sys.exit(1)
+        print(f"An unexpected error occurred: {e}")
 
 if __name__ == "__main__":
     main()
