@@ -6,7 +6,7 @@ import socket
 
 def main():
     if len(sys.argv) != 3:
-        print("Usage: python mail_agent.py <hostname> <port>")
+        print("Usage: python Client.py <hostname> <port>")
         sys.exit(1)
 
     hostname = sys.argv[1]
@@ -63,6 +63,7 @@ def is_valid_email(email):
 def prompt_for_valid_emails(prompt_message):
     while True:
         sys.stdout.write(prompt_message)
+        sys.stdout.flush()
         emails_input = sys.stdin.readline().strip()
         emails = [email.strip() for email in emails_input.split(',')]
 
@@ -82,7 +83,7 @@ def prompt_user_for_email():
     message_lines = []
     while True:
         line = sys.stdin.readline()
-        if line.strip() == ".":
+        if line == ".\n":
             break
         message_lines.append(line.rstrip('\n'))
     return from_address, to_addresses, subject, message_lines
@@ -153,7 +154,6 @@ def format_email_message(from_address, to_addresses, subject, message_lines):
         f"Subject: {subject}",
         "",
     ]
-    # Adjust line endings to \n for the email body
     return "\n".join(headers + message_lines) + "\n.\n"
 
 if __name__ == "__main__":
