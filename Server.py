@@ -281,7 +281,9 @@ def is_valid_domain(d, dotCount):
 
 def is_valid(s):
     s = s.lstrip(' \t')
-    if not s.startswith('\n') and not s.endswith('\n'):
+    if not s.startswith('\n')
+        return SMTPResponses.rej_param
+    elif not s.endswith('\n'):
         return SMTPResponses.rej_com
     else:
         return SMTPResponses.accepted
@@ -292,14 +294,14 @@ def saveMail(email_list):
         forward_dir = os.path.join(script_dir, 'forward')
         os.makedirs(forward_dir, exist_ok=True)
 
-        domains = []
+        domains = set()
         for line in email_list:
             if line.startswith("To:"):
                 email_addresses = line.split(':')[1].strip().split(',')
                 for email_address in email_addresses:
                     email_address = email_address.strip().strip("<>")
                     domain = email_address.split('@')[-1]
-                    domains.append(domain)
+                    domains.add(domain)
 
         for domain in domains:
             file_path = os.path.join(forward_dir, f"{domain}")
