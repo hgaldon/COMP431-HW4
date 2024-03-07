@@ -69,15 +69,15 @@ def prompt_for_valid_emails(prompt_message):
         if all(is_valid_email(email) for email in emails):
             return emails
         else:
-            sys.stdout.write("One or more email addresses are invalid. Please try again.\n")
+            pass
 
 def prompt_user_for_email():
-    from_address = prompt_for_valid_emails("From: \n")[0]
-    to_addresses = prompt_for_valid_emails("To: \n")
-    sys.stdout.write("Subject: \n")
+    from_address = prompt_for_valid_emails("From:\n")[0]
+    to_addresses = prompt_for_valid_emails("To:\n")
+    sys.stdout.write("Subject:\n")
     subject = sys.stdin.readline().strip()
     
-    sys.stdout.write("Message: \n")
+    sys.stdout.write("Message:\n")
     sys.stdout.flush()
     message_lines = []
     while True:
@@ -85,88 +85,65 @@ def prompt_user_for_email():
         if line.strip() == ".":
             break
         message_lines.append(line.rstrip('\n'))
-    
-    #print(from_address)
-    #print(to_addresses)
-    #print(subject)
-    #print(message_lines)    
     return from_address, to_addresses, subject, message_lines
 
 def send_email_via_smtp(from_address, to_addresses, subject, message_lines, hostname, port):
+    sock = None
     try:
-        print("Starting to send email...")
         sock = socket.socket()
-        print(f"Connecting to {hostname} on port {port}...")
-        
         sock.connect((hostname, port))
-        print("Connected.")
-        
         server_greeting = sock.recv(1024).decode()
-        print(f"Server greeting: {server_greeting}")
         if not server_greeting.startswith('220'):
-            print("Failed to receive a valid server greeting.")
-            return
-        
+            raise Exception("Failed to receive a valid server greeting.")
+
         helo_command = f"HELO {socket.gethostname()}\n"
-        print(f"Sending HELO command: {helo_command.strip()}")
         sock.send(helo_command.encode())
-        
         helo_response = sock.recv(1024).decode()
-        print(f"HELO response: {helo_response}")
         if not helo_response.startswith('250'):
-            print("HELO command failed.")
-            return False
+            raise Exception("HELO command failed.")
         
         mail_from_cmd = f"MAIL FROM: <{from_address}>\n"
-        print(f"Sending MAIL FROM command: {mail_from_cmd.strip()}")
         sock.send(mail_from_cmd.encode())
         mail_from_response = sock.recv(1024).decode()
-        print(f"MAIL FROM response: {mail_from_response}")
         if not mail_from_response.startswith('250'):
-            print("MAIL FROM command failed.")
-            return False
+            raise Exception("MAIL FROM command failed.")
         
         for addr in to_addresses:
             rcpt_to_cmd = f"RCPT TO: <{addr}>\n"
-            print(f"Sending RCPT TO command for {addr}: {rcpt_to_cmd.strip()}")
             sock.send(rcpt_to_cmd.encode())
             rcpt_to_response = sock.recv(1024).decode()
-            print(f"RCPT TO response for {addr}: {rcpt_to_response}")
             if not rcpt_to_response.startswith('250'):
-                print(f"RCPT TO command failed for {addr}.")
-                return False
+                raise Exception(f"RCPT TO command failed for {addr}.")
         
-        print("Sending DATA command.")
         sock.send("DATA\n".encode())
         data_response = sock.recv(1024).decode()
-        print(f"DATA response: {data_response}")
         if not data_response.startswith('354'):
-            print("DATA command failed.")
-            return False
+            raise Exception("DATA command failed.")
         
         email_message = format_email_message(from_address, to_addresses, subject, message_lines)
-        print("Sending email data...")
-        sock.send(email_message.encode())
+        sock.sendall(email_message.encode())
         
         end_data_response = sock.recv(1024).decode()
-        print(f"End of data response: {end_data_response}")
         if not end_data_response.startswith('250'):
-            print("Error sending email data.")
-            return False
+            raise Exception("Error sending email data.")
 
-        print("Sending QUIT command.")
-        sock.send("QUIT".encode())
+        sock.send("QUIT\n".encode())
         quit_response = sock.recv(1024).decode()
-        print(f"QUIT response: {quit_response}")
         if not quit_response.startswith('221'):
-            print("Error during QUIT.")
-            return False
+            raise Exception("Error during QUIT.")
 
+    except socket.error as e:
+        error_message = f"Socket error occurred: {e}"
     except Exception as e:
-        print(f"An error occurred: {e}")
-        return False
-    print("Email sent successfully.")
-    return True
+        error_message = f"An error occurred: {e}"
+    else:
+        return True
+    finally:
+        if sock:
+            sock.close()
+    
+    print(error_message)
+    return False
 
 def format_email_message(from_address, to_addresses, subject, message_lines):
     to_addresses_formatted = ", ".join([f"<{addr}>" for addr in to_addresses])
