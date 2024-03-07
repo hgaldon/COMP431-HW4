@@ -91,32 +91,32 @@ def prompt_user_for_email():
 def send_email_via_smtp(from_address, to_addresses, subject, message_lines, hostname, port):
     sock = None
     try:
-        sock = socket.socket()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((hostname, port))
         server_greeting = sock.recv(1024).decode()
         if not server_greeting.startswith('220'):
             raise Exception("Failed to receive a valid server greeting.")
 
         helo_command = f"HELO {socket.gethostname()}\n"
-        sock.send(helo_command.encode())
+        sock.sendall(helo_command.encode())
         helo_response = sock.recv(1024).decode()
         if not helo_response.startswith('250'):
             raise Exception("HELO command failed.")
         
         mail_from_cmd = f"MAIL FROM: <{from_address}>\n"
-        sock.send(mail_from_cmd.encode())
+        sock.sendall(mail_from_cmd.encode())
         mail_from_response = sock.recv(1024).decode()
         if not mail_from_response.startswith('250'):
             raise Exception("MAIL FROM command failed.")
         
         for addr in to_addresses:
             rcpt_to_cmd = f"RCPT TO: <{addr}>\n"
-            sock.send(rcpt_to_cmd.encode())
+            sock.sendall(rcpt_to_cmd.encode())
             rcpt_to_response = sock.recv(1024).decode()
             if not rcpt_to_response.startswith('250'):
                 raise Exception(f"RCPT TO command failed for {addr}.")
         
-        sock.send("DATA\n".encode())
+        sock.sendall("DATA\n".encode())
         data_response = sock.recv(1024).decode()
         if not data_response.startswith('354'):
             raise Exception("DATA command failed.")
@@ -128,7 +128,7 @@ def send_email_via_smtp(from_address, to_addresses, subject, message_lines, host
         if not end_data_response.startswith('250'):
             raise Exception("Error sending email data.")
 
-        sock.send("QUIT\n".encode())
+        sock.sendall("QUIT\n".encode())
         quit_response = sock.recv(1024).decode()
         if not quit_response.startswith('221'):
             raise Exception("Error during QUIT.")

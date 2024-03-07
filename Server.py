@@ -31,26 +31,23 @@ def main():
         sys.stdout.write("Failed to start the server after multiple attempts\n")
         sys.exit(1)
 
-def start_server(initial_port, max_attempts=5):
+def start_server(port):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    for attempt in range(max_attempts):
-        try:
-            port = initial_port + attempt
-            server_address = (socket.gethostname(), port)
-            server_socket.bind(server_address)
-            server_socket.listen(5)
-            while True:
-                client_socket, address = server_socket.accept()
-                handle_client(client_socket)
-            return True
-        except OSError as e:
-            if e.errno == socket.errno.EADDRINUSE:
-                sys.stdout.write(f"Port {port} is in use, trying the next port...\n")
-            else:
-                sys.stdout.write(f"Failed to start server: {e}\n")
-                break
-    return False
+    try:
+        server_address = (socket.gethostname(), port)
+        server_socket.bind(server_address)
+        server_socket.listen(1)
+        while True:
+            client_socket, address = server_socket.accept()
+            handle_client(client_socket)
+        return True
+    except OSError as e:
+        if e.errno == socket.errno.EADDRINUSE:
+            sys.stdout.write(f"Port {port} is in use. Please try a different port.\n")
+        else:
+            sys.stdout.write(f"Failed to start server: {e}\n")
+        return False
 
 def handle_client(client_socket):
     error_message = ""
@@ -68,7 +65,10 @@ def handle_client(client_socket):
                 handle_quit(client_socket)
                 break
             else:
-                client_socket.sendall(SMTPResponses.rej_com.encode())
+                if command.startswith("MAIL") or command.startswith("RCPT") or command.startswith("DATA"):
+                    client_socket.sendall(SMTPResponses.seq.encode())
+                else:
+                    client_socket.sendall(SMTPResponses.rej_com.encode())
     except socket.error as e:
         error_message = f"Socket error occurred: {e}"
     except Exception as e:
@@ -89,55 +89,51 @@ def handle_quit(client_socket):
     client_socket.sendall(f"221 {socket.gethostname()} closing connection\n".encode())
 
 def handle_helo(client_socket, command):
-    parts = re.split(r'\s+', command, 1)
-    if len(parts) < 2:
+    s = command[4:]
+    if not s or s[0] not in (' ', '\t'):
         client_socket.sendall(SMTPResponses.rej_com.encode())
+    s = s.lstrip()
+    index = len(s)
+    newlineFirstBool = False
+    for i, char in enumerate(s):
+        if char == '\n':
+            newlineFirstBool = True
+            index = i
+            break
+        elif char in (' ', '\t'):
+            index = i
+            break
+    if index == len(s):
+        client_socket.sendall(SMTPResponses.rej_com.encode())
+    if not newlineFirstBool:
+        client_domain = s[:index]
+        s = s[index:].lstrip(' \t')
+        if not s.startswith('\n') or not s.endswith('\n'):
+            client_socket.sendall(SMTPResponses.rej_com.encode())            
     else:
-        s = parts[1]
-        index = len(s)
-        newlineFirstBool = False
-        for i, char in enumerate(s):
-            if char in ('\n'):
-                newlineFirstBool = True
-                index = i
-                break
-            elif char in (' ', '\t'):
-                index = i
-                break
-        if index == len(s):
+        s = s.split('\n', 1)
+        client_domain = s[0]
+        s = s[1]
+        if len(s) > 0:
             client_socket.sendall(SMTPResponses.rej_com.encode())
-        elif not newlineFirstBool:
-            client_domain = s[:index]
-            s = s[index:].lstrip()
-            if not s.startswith('\n') or not s.endswith('\n'):
-                client_socket.sendall(SMTPResponses.rej_com.encode())
-        else:
-            s = s.split('\n', 1)
-            client_domain = s[0]
-            s = s[1]
-            if len(s) > 0:
-                client_socket.sendall(SMTPResponses.rej_com.encode())
-        response = f"250 Hello {client_domain}, pleased to meet you\n"
-        client_socket.sendall(response.encode())
+    response = f"250 Hello {client_domain}, pleased to meet you\n"
+    client_socket.sendall(response.encode())
 
 def start_parse(client_socket):
     str_flag = "M"
-    mail_list = []
 
     while True:
         command = receive_command(client_socket)
         if command.strip() == "QUIT":
             handle_quit(client_socket)
             break
-        input_line = command
-        if not input_line or input_line == "\n":
+        if not command or command == "\n":
             break     
-        str_flag, should_continue = process_input(input_line, str_flag, mail_list, client_socket)
+        str_flag, should_continue = process_input(command, str_flag, client_socket)
         if not should_continue or str_flag == 'D':
             str_flag = "M"
-            mail_list = []
 
-def process_input(input, str_flag, mail_list, socket):
+def process_input(input, str_flag, socket):
     if input.startswith("RCPT"):
         s = input[4:]
         if s[0] != ' ' and s[0] != '\t':
@@ -152,8 +148,6 @@ def process_input(input, str_flag, mail_list, socket):
             return str_flag, False
         result = is_valid_rcpt_to(s)
         if result == SMTPResponses.accepted:
-            to_addr = s.split(maxsplit=1)[1]
-            mail_list.append(to_addr)
             str_flag = "R+"
             socket.sendall(f"{result}\n".encode())
         else:
@@ -174,8 +168,6 @@ def process_input(input, str_flag, mail_list, socket):
             return str_flag, False
         result = is_valid_mail_from_cmd(s)
         if result == SMTPResponses.accepted:
-            from_addr = s.split(maxsplit=1)[1]
-            mail_list.append(from_addr)
             str_flag = "R"
             socket.sendall(f"{result}\n".encode())
         else:
@@ -189,9 +181,8 @@ def process_input(input, str_flag, mail_list, socket):
         socket.sendall(f"{SMTPResponses.mail_input}\n".encode())
         body, result = is_valid_data(receive_command(socket))
         if result == SMTPResponses.accepted:
-            mail_list.extend(body)
             socket.sendall(f"{result}\n".encode())
-            saveMail(mail_list)
+            saveMail(body)
         else:
             socket.sendall(f"{result}\n".encode())
             return str_flag, False
@@ -219,7 +210,6 @@ def is_valid_data(email_message):
         current_line += 1
         
         if message == ".\n" and nlFlag == 1:
-            body.append(message)
             return body, SMTPResponses.accepted
         else:
             if message.endswith('\n'):
@@ -253,7 +243,6 @@ def is_valid_mail_from_cmd(s):
 
     if not path.startswith("<"):
         return SMTPResponses.rej_param
-
     return is_valid_reverse_path(path[1:])
 
 def is_valid_reverse_path(lp):
@@ -303,27 +292,19 @@ def saveMail(email_list):
         forward_dir = os.path.join(script_dir, 'forward')
         os.makedirs(forward_dir, exist_ok=True)
 
-        email_content = []
-        domains = set()
-
+        domains = []
         for line in email_list:
-            if line.startswith("From:"):
-                email_content = [line]
-            elif line == ".\n":
-                continue
-            else:
-                email_content.append(line)
-                if line.startswith("To:"):
-                    email_addresses = line.split(':')[1].strip().split(',')
-                    for email_address in email_addresses:
-                        email_address = email_address.strip().strip("<>")
-                        domain = email_address.split('@')[-1]
-                        domains.add(domain)
+            if line.startswith("To:"):
+                email_addresses = line.split(':')[1].strip().split(',')
+                for email_address in email_addresses:
+                    email_address = email_address.strip().strip("<>")
+                    domain = email_address.split('@')[-1]
+                    domains.append(domain)
 
         for domain in domains:
             file_path = os.path.join(forward_dir, f"{domain}")
             with open(file_path, "a") as file:
-                file.write('\n'.join(email_content) + "\n")
+                file.write('\n'.join(email_list) + "\n")
     except IOError as e:
         sys.stdout.write(f"Error writing to {file_path}: {e}\n")
     except Exception as e:
