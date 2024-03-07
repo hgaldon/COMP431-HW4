@@ -281,7 +281,7 @@ def is_valid_domain(d, dotCount):
 
 def is_valid(s):
     s = s.lstrip(' \t')
-    if not s.startswith('\n')
+    if not s.startswith('\n'):
         return SMTPResponses.rej_param
     elif not s.endswith('\n'):
         return SMTPResponses.rej_com
